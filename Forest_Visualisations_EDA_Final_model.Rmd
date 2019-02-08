@@ -1,0 +1,292 @@
+---
+title: "Forest Cover"
+author: "Prakash"
+date: "January 31, 2019"
+output:
+  html_document:
+    df_print: paged
+---
+```{r}
+options(java.parameters = "-Xmx4g") 
+packages <- c(
+  "ggplot2",    # for awesome graphics
+  "GGally",     # for data sets and plotFit() functions
+  "data.table", # for fread 
+  "plyr",       # for data cleaning
+  "dplyr",      # for data manipulation
+  "purrr",      # for data manipulation 
+  "caret",      # for model building and cv
+  "tidyr", 
+  "dummies",    # for creating dummies
+  "doMC"        # for parallel processing
+)
+# Install required (CRAN) packages
+
+ipak <- function(pkg){
+    new.pkg <- pkg[!(pkg %in% installed.packages()[, "Package"])]
+    if (length(new.pkg)) 
+        install.packages(new.pkg, dependencies = TRUE)
+    sapply(pkg, require, character.only = TRUE)
+}
+ipak(packages)
+
+```
+
+```{r}
+setwd("C:/Users/avina/Desktop/Assignments/Projects/forest-cover-type-prediction")
+train_data <- fread("train.csv")
+test_data <- fread("test.csv")
+
+#Merging train data and test data so that there will be same levels in columns in train and test data
+train_data_updt <- train_data %>% 
+                          select(-Cover_Type)
+merge_data <- bind_rows(train_data_updt,test_data)
+```
+
+```{r include=FALSE}
+# Data Understanding and Converting attributes to proper data types.
+
+merge_data %>% 
+  str(train_data_updt)
+
+factor_data <- merge_data %>% 
+                  select(Id,starts_with("Soil_"), starts_with("Wilderness_Area")) 
+
+fact_data <- lapply(factor_data,as.factor)   
+fact_df <- data.frame(fact_data)
+num_df <- merge_data %>%
+                  select((Elevation:Horizontal_Distance_To_Fire_Points))  
+
+merge_df <- cbind(num_df,fact_df)
+# Separating train data and test data
+train_df <- merge_df[1:nrow(train_data),]
+test_df <- setdiff(merge_df,train_df)
+
+```
+
+```{r}
+
+# Making Soil_Type dummy columns into single factor Soil_Type
+train_df$Soil_Type <- train_df %>% 
+                    select(Id,starts_with("Soil_")) %>%
+                    gather(Soil_Type, Value, Soil_Type1:Soil_Type40, factor_key=TRUE) %>%
+                    filter(Value==1) %>% 
+                    arrange(Id) %>%
+                    select("Soil_Type")
+
+# Making Wilderness_Area dummy columns into single factor Wilderness_Area
+train_df$Wilderness_Area <- train_df %>% 
+                    select(Id,starts_with("Wilderness_Area")) %>%
+                    gather(Wilderness_Area, Value, Wilderness_Area1:Wilderness_Area4, factor_key=TRUE) %>%
+                    filter(Value==1) %>% 
+                    arrange(Id) %>%
+                    select("Wilderness_Area")
+
+#Adding back Cover type column to train_df
+train_df$Cover_Type <- train_data$Cover_Type
+train_df$Cover_Type <- as.factor(train_df$Cover_Type)
+
+# Missing Values interpretation
+colSums(is.na(train_df))
+# No Missing values are present
+
+# Summary  stats
+train_df %>% 
+      summary()
+```
+
+
+```{r}
+# Visualisations
+names(num_df) <- c("Elevation","Aspect","Slope","HD_Hydro","VD_Hydro","HD_Road","Hshade_9am", "Hshade_Noon","Hshade_3pm","HD_FirePoints")
+
+# Correlations
+ggcorr(num_df, palette = "RdBu", label = TRUE)
+```
+
+
+```{r}
+
+# Histograms
+num_df %>%
+  keep(is.numeric) %>%                     # Keep only numeric columns
+  gather() %>%                             # Convert to key-value pairs
+  ggplot(aes(value)) +                     # Plot the values
+    facet_wrap(~ key, scales = "free") +   # In separate panels
+  geom_histogram(aes(y =..density..), 
+                 col="darkblue", 
+                  fill = "lightblue") + 
+  geom_density(col="red")
+```
+
+
+```{r}
+# Visulisations by Cover Type
+train_df$Cover_Type_Upd <- mapvalues(train_df$Cover_Type, 
+                          from = c(1,2,3,4,5,6,7), to = c("Spruce/Fir","Lodgepole Pine","Ponderosa Pine",                                                          "Cottonwood/Willow","Aspen","Douglas-fir","Krummholz"))
+
+
+# Boxplots of all numerical variables by cover type
+
+for (i in 1:ncol(num_df)){
+  print(ggplot(train_df,aes(train_df$Cover_Type_Upd,train_df[[c(i)]],
+                            fill=as.factor(train_df$Cover_Type_Upd)))
+        + geom_boxplot(outlier.colour="black",outlier.shape=16,outlier.size=1,notch=FALSE)
+        + xlab("Cover Type")
+        + ylab(colnames(train_df)[i])
+  )
+}
+```
+
+```{r}
+# Summary Stats by Cover Type
+# psych::describeBy(num_df, train_df$Cover_Type_Upd)
+```
+
+```{r}
+# Visualisation by Wildnerness Area
+ggplot(train_df, aes(x=Wilderness_Area,fill=Wilderness_Area))+
+  geom_bar(stat="count", width=0.7)+
+  theme_minimal()  +
+  theme(legend.position="top") +
+  labs(title="Distribution of Wilderness Area ")
+```
+
+```{r}
+# Distribution of Soil Types
+ggplot(train_df, aes(x=Soil_Type,fill=Soil_Type))+
+  geom_bar(stat="count", width=0.7)+
+  theme_minimal()  +
+  theme(legend.position="bottom") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  labs(title="Distribution of Soil Types")
+```
+
+
+```{r}
+# Distribution of Cover Types by Wilderness Area
+ggplot(train_df, aes(x=Cover_Type_Upd, y=..count..))+
+  geom_bar(aes(fill=Wilderness_Area),position = "dodge")+
+  theme(legend.position="bottom") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  labs(title="Cover Type by Wilderness Area ")
+```
+
+```{r}
+# Distribution of Wilderness Area by Cover Type
+ggplot(train_df, aes(x=Wilderness_Area, y=..count..))+
+  geom_bar(aes(fill=Cover_Type_Upd),position = "dodge")+
+  theme(legend.position="bottom") +
+  labs(title="Wilderness Area by Cover Type")
+```
+
+```{r}
+# Distribution of Wilderness Area by Soil Type
+ggplot(train_df, aes(x=Wilderness_Area, y=..count..))+
+  geom_bar(aes(fill=Soil_Type),position = "dodge")+
+  theme(legend.position="bottom") +
+  labs(title="Wilderness Area by Soil Type")
+  
+```
+
+```{r}
+#Elevation Density by Cover Type
+ggplot(train_df, aes(Elevation, fill=Cover_Type_Upd)) +
+  geom_density(alpha=0.4) +
+  labs(title="Elevation Density by Cover Type", x="", y="") +
+  scale_fill_discrete(name="Cover Type")
+```
+
+```{r}
+# To check Class imbalance in Target Varaible
+percentage <- prop.table(table(train_df$Cover_Type_Upd)) * 100
+ggplot(train_df, aes(x=Cover_Type_Upd,fill=Cover_Type_Upd))+
+  geom_bar(stat="count", width=0.7)+
+  theme_minimal()  +
+  theme(legend.position="top")
+
+```
+
+```{r}
+
+# Scatter plots for Horizontal and Vertical attributes
+# Make list of variable names to loop over.
+var_list = combn(names(train_df)[4:6], 2, simplify=FALSE)
+
+# Make plots.
+plot_list = list()
+for (i in 1:length(var_list)) {
+    p = ggplot(train_df, aes_string(x=var_list[[i]][1], y=var_list[[i]][2])) +
+        geom_point(size=3, aes(colour=Cover_Type_Upd),position = position_jitter(w = 0.05, h = 0))
+    plot_list[[i]] = p
+}
+plot_list
+```
+
+```{r}
+# Data Partitioning
+model_data <- train_df %>%
+                    select(-c(Cover_Type_Upd,Id,Wilderness_Area,Soil_Type))
+
+```
+
+```{r}
+#Feature Engineering
+features <- function(data){
+    data$HHydro_Fire = (data$Horizontal_Distance_To_Hydrology+data$Horizontal_Distance_To_Fire_Points)
+    data$Neg_HHydro_Fire = (data$Horizontal_Distance_To_Hydrology-data$Horizontal_Distance_To_Fire_Points)
+    data$Mean_HHydro_Fire = (data$Horizontal_Distance_To_Hydrology+data$Horizontal_Distance_To_Fire_Points)/2
+    data$Mean_Neg_HHydro_Fire = (data$Horizontal_Distance_To_Hydrology-data$Horizontal_Distance_To_Fire_Points)/2
+      
+    data$HHydro_Road = (data$Horizontal_Distance_To_Hydrology+data$Horizontal_Distance_To_Roadways)
+    data$Neg_HHydro_Road = (data$Horizontal_Distance_To_Hydrology-data$Horizontal_Distance_To_Roadways)
+    data$Mean_HHydro_Road = (data$Horizontal_Distance_To_Hydrology+data$Horizontal_Distance_To_Roadways)/2
+    data$Mean_Neg_HHydro_Road = (data$Horizontal_Distance_To_Hydrology-data$Horizontal_Distance_To_Roadways)/2
+
+    data$Fire_Road = (data$Horizontal_Distance_To_Fire_Points+data$Horizontal_Distance_To_Roadways)
+    data$Neg_Fire_Road = (data$Horizontal_Distance_To_Fire_Points-data$Horizontal_Distance_To_Roadways)
+    data$Mean_Fire_Road = (data$Horizontal_Distance_To_Hydrology+data$Horizontal_Distance_To_Roadways)/2
+    data$Mean_Neg_Fire_Road = (data$Horizontal_Distance_To_Fire_Points-data$Horizontal_Distance_To_Roadways)/2
+
+    data$Elevation_V = data$Elevation+data$Vertical_Distance_To_Hydrology
+    data$Neg_Elevation_V = data$Elevation-data$Vertical_Distance_To_Hydrology
+
+    data$Mean_Hillshade =  (data$Hillshade_9am  + data$Hillshade_Noon + data$Hillshade_3pm ) / 3
+    data$Mean_Hillshade_neg =  (data$Hillshade_9am  - data$Hillshade_Noon - data$Hillshade_3pm ) / 3
+    data$Mean_Hillshade_avg_max =  (data$Hillshade_9am  + data$Hillshade_Noon ) / 2
+    data$Mean_Hillshade_avg_min =  (data$Hillshade_9am  - data$Hillshade_Noon ) / 2
+    
+    data$Slope_Pyth = sqrt(data$Horizontal_Distance_To_Hydrology**2+data$Vertical_Distance_To_Hydrology**2)
+    data$Mean_Fire_Hydro_Road=(data$Horizontal_Distance_To_Fire_Points + data$Horizontal_Distance_To_Hydrology + data$Horizontal_Distance_To_Roadways) / 3
+
+    data$"Abs_VHydro" = abs(data$Vertical_Distance_To_Hydrology)
+
+    data$Neg_Elevation_HHydro = data$Elevation-data$Horizontal_Distance_To_Hydrology*0.2
+    data$Neg_Elevation_VHydro = data$Elevation-data$Vertical_Distance_To_Hydrology
+    return(data)
+
+}
+train_features <- features(model_data)
+test_features <- features(test_df)
+```
+
+```{r}
+
+# Extra trees model
+cv_5 = trainControl(method = "cv", number=3,search="grid")
+et_grid =  expand.grid(mtry = 12, numRandomCuts = 3)
+et_fit = train(Cover_Type ~ ., data = train_features,
+               method = "extraTrees",
+               trControl = cv_5,
+               tuneGrid = et_grid,
+               numThreads = 4)
+var_imp <- varImp(et_fit)
+et_fit$finalModel
+
+y_pred_final<-predict(et_fit,newdata=test_features)
+Cover_Type<-as.character(y_pred_final)
+Id<-test_data$Id
+testfinal<-as.data.frame(cbind(Id,Cover_Type))
+write.csv(testfinal,"predictionsetfeature_newfeatures.csv",row.names = FALSE)
+```
+
