@@ -2,7 +2,7 @@
 
 This is a classification problem to predict the forest cover type depending on the input variables. There are 7 levels in the target column.
 
-Models built
+Models built: Random Forest, Random Forest with PCA, Extra trees classifier, XGBoost
 
 Random Forest with PCA - Accuracy on Test data - 69%
 
